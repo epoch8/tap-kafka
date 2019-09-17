@@ -34,6 +34,7 @@ wheels/
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+pip-wheel-metadata
 
 # Unit test / coverage reports
 htmlcov/
@@ -103,6 +104,9 @@ ENV/
 # Emacs
 .tramp_history
 
+# VSCode
+.vscode
+
 config.json
 state.json
-properties.json
+catalog.json

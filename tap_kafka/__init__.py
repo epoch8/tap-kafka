@@ -1,62 +1,82 @@
+import importlib
 import singer
+import platform
+import os
+import ssl
 from singer import utils
 from kafka import KafkaConsumer
 import json
-import pdb
 import sys
 import tap_kafka.sync as sync
+import tap_kafka.discovery as discovery
+
 
 LOGGER = singer.get_logger()
 
 REQUIRED_CONFIG_KEYS = [
-    'group_id',
-    'bootstrap_servers',
-    'topic',
-    # 'schema',
-    # 'primary_keys',
-    'message_serialization'
+    "bootstrap_servers",
+    "topic",
+    "schema"
 ]
 
-def dump_catalog(all_streams):
-    json.dump({'streams' : all_streams}, sys.stdout, indent=2)
 
-def do_discovery(config):
-    try:
-        consumer = KafkaConsumer(config['topic'],
-                                 group_id=config['group_id'],
-                                 enable_auto_commit=False,
-                                 consumer_timeout_ms=config.get('consumer_timeout_ms', 10000),
-                                 #value_deserializer=lambda m: json.loads(m.decode('ascii'))
-                                 bootstrap_servers=config['bootstrap_servers'].split(','))
-    except Exception as ex:
-        LOGGER.warn("Unable to connect to kafka. bootstrap_servers: %s, topic: %s, group_id: %s", config['bootstrap_servers'].split(','), config['topic'], config['group_id'])
-        LOGGER.warn(ex)
-        raise ex
+def get_ssl_context():
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.check_hostname = True
+    ssl_context.load_default_certs()
 
-    if config['topic'] not in consumer.topics():
-        LOGGER.warn("Unable to view topic %s. bootstrap_servers: %s, topic: %s, group_id: %s", config['topic'], config['bootstrap_servers'].split(','), config['topic'], config['group_id'])
-        raise Exception('Unable to view topic {}'.format(config['topic']))
+    if platform.system().lower() == 'darwin':
+        import certifi
+        ssl_context.load_verify_locations(
+            cafile=os.path.relpath(certifi.where()),
+            capath=None,
+            cadata=None)
 
-    dump_catalog(common.default_streams(config))
+    return ssl_context
 
+
+def get_value_deserializer(config):
+    if 'deserializer' in config:
+        path = config['deserializer'].split('.')
+        function_name = path.pop()
+        module_name = ".".join(path)
+        module = importlib.import_module(module_name)
+        function = getattr(module, function_name)
+        return lambda m: function(m.decode('utf-8'))
+
+    return lambda m: json.loads(m.decode("utf-8"))
 
 
 def main_impl():
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
-
-    kafka_config = {'topic' : args.config['topic'],
-                    'group_id' : args.config['group_id'],
-                    'reject_topic': args.config.get('reject_topic'),
-                    'bootstrap_servers': args.config['bootstrap_servers'].split(',')}
+    consumer = None
+    try:
+        consumer = KafkaConsumer(
+            bootstrap_servers=args.config['bootstrap_servers'],
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
+            consumer_timeout_ms=args.config.get("consumer_timeout_ms", 10000),
+            value_deserializer=get_value_deserializer(args.config),
+            ssl_context=get_ssl_context(),
+            ** args.config.get("consumer_config", {})
+        )
+    except Exception as ex:
+        LOGGER.critical(
+            "Unable to connect to kafka. bootstrap_servers: %s, topic: %s",
+            args.config["bootstrap_servers"].split(","),
+            args.config["topic"],
+        )
+        raise ex
 
     if args.discover:
-        do_discovery(args.config)
-    elif args.properties:
+        discovery.do_discovery(consumer, args.config)
+    elif args.catalog:
         state = args.state or {}
-        # streams = args.properties or {'streams' : common.default_streams(kafka_config)}
-        sync.do_sync(kafka_config, args.properties, state)
+        sync.do_sync(args.config, consumer, state, args.catalog)
     else:
-        LOGGER.info("No properties were selected")
+        LOGGER.info("No catalog selections were made")
+
 
 def main():
     try:
@@ -64,6 +84,7 @@ def main():
     except Exception as exc:
         LOGGER.critical(exc)
         raise exc
+
 
 if __name__ == "__main__":
     main()
