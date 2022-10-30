@@ -52,14 +52,25 @@ def main_impl():
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
     consumer = None
     try:
+        consumer_config = args.config.get("consumer_config", {})
+        
+        if any(
+            i.startswith('ssl') or i.startswith('sasl') or i == 'security_protocol' 
+            for i in consumer_config.keys()
+        ):
+            # Do not force SSL context if user knows better
+            ssl_context = None
+        else:
+            ssl_context = get_ssl_context()
+
         consumer = KafkaConsumer(
             bootstrap_servers=args.config['bootstrap_servers'],
             enable_auto_commit=False,
             auto_offset_reset="earliest",
             consumer_timeout_ms=args.config.get("consumer_timeout_ms", 10000),
             value_deserializer=get_value_deserializer(args.config),
-            ssl_context=get_ssl_context(),
-            ** args.config.get("consumer_config", {})
+            ssl_context=ssl_context,
+            ** consumer_config
         )
     except Exception as ex:
         LOGGER.critical(
