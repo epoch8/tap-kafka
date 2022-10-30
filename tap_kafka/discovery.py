@@ -16,7 +16,14 @@ def default_streams(config):
     mdata = {}
     metadata.write(mdata, (), "table-key-properties", primary_keys)
 
-    return [{"tap_stream_id": config["topic"], "metadata": metadata.to_list(mdata), "schema": schema}]
+    return [
+        {
+            "tap_stream_id": config["topic"],
+            "metadata": metadata.to_list(mdata),
+            "schema": schema,
+            "key_properties": primary_keys,
+        }
+    ]
 
 
 def do_discovery(consumer, config):
